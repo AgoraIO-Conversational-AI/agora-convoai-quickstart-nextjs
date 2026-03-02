@@ -1,0 +1,15 @@
+{
+  "projectId": "conversational-ai-nextjs-client",
+  "orgId": null,
+  "settings": {
+    "createdAt": 1619398889966,
+    "framework": "nextjs",
+    "devCommand": "pnpm dev",
+    "installCommand": "pnpm install",
+    "buildCommand": "pnpm build",
+    "outputDirectory": ".next",
+    "rootDirectory": null,
+    "directoryListing": false,
+    "nodeVersion": "18.x"
+  }
+}
