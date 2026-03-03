@@ -39,8 +39,6 @@ export default function LandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [agoraData, setAgoraData] = useState<AgoraTokenData | null>(null);
   const [agentJoinError, setAgentJoinError] = useState(false);
-  const [useCustomLLM, setUseCustomLLM] = useState(false);
-
   const handleStartConversation = async () => {
     setIsLoading(true);
     setError(null);
@@ -65,7 +63,6 @@ export default function LandingPage() {
         channel_name: responseData.channel,
         input_modalities: ['text'],
         output_modalities: ['text', 'audio'],
-        use_custom_llm: useCustomLLM,
       };
 
       try {
@@ -132,30 +129,6 @@ export default function LandingPage() {
           )}
           {!showConversation ? (
             <>
-              {/* Custom LLM toggle */}
-              <div className="flex items-center justify-center gap-3 mb-8">
-                <span className={`text-sm transition-colors ${!useCustomLLM ? 'text-white' : 'text-gray-500'}`}>
-                  Direct LLM
-                </span>
-                <button
-                  onClick={() => setUseCustomLLM((v) => !v)}
-                  role="switch"
-                  aria-checked={useCustomLLM}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent
-                    transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00c2ff]
-                    ${useCustomLLM ? 'bg-[#00c2ff]' : 'bg-gray-600'}`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg
-                      transition duration-200 ease-in-out
-                      ${useCustomLLM ? 'translate-x-5' : 'translate-x-0'}`}
-                  />
-                </button>
-                <span className={`text-sm transition-colors ${useCustomLLM ? 'text-[#00c2ff]' : 'text-gray-500'}`}>
-                  Custom LLM <span className="text-xs opacity-60">(/api/chat/completions)</span>
-                </span>
-              </div>
-
               <button
                 onClick={handleStartConversation}
                 disabled={isLoading}

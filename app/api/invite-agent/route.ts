@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RtcTokenBuilder, RtcRole } from 'agora-token';
+import { buildAgoraAuthHeader } from '@/lib/agora-token';
 import {
   ClientStartRequest,
   AgentResponse,
@@ -119,12 +120,10 @@ function getValidatedConfig() {
     baseUrl: process.env.NEXT_AGORA_CONVO_AI_BASE_URL || '',
     appId: process.env.NEXT_PUBLIC_AGORA_APP_ID || '',
     appCertificate: process.env.NEXT_AGORA_APP_CERTIFICATE || '',
-    customerId: process.env.NEXT_AGORA_CUSTOMER_ID || '',
-    customerSecret: process.env.NEXT_AGORA_CUSTOMER_SECRET || '',
-    agentUid: process.env.NEXT_AGENT_UID || 'Agent',
+    agentUid: process.env.NEXT_PUBLIC_AGENT_UID || 'Agent',
   };
 
-  if (Object.values(agoraConfig).some((v) => v === '')) {
+  if (!agoraConfig.baseUrl || !agoraConfig.appId || !agoraConfig.appCertificate) {
     throw new Error('Missing Agora configuration. Check your .env.local file');
   }
 
@@ -174,8 +173,9 @@ export async function POST(request: NextRequest) {
       channel_name,
       input_modalities,
       output_modalities,
-      use_custom_llm,
     } = body;
+
+    const use_custom_llm = process.env.NEXT_CUSTOM_LLM === 'true';
 
     // When use_custom_llm=true, Agora's cloud calls our /api/chat/completions
     // endpoint. Because Agora makes the request from its own servers, the URL
@@ -465,15 +465,18 @@ Ask these, adapting to their answers:
 
     // console.log('Sending request to start agent:', requestBody);
 
+    const authHeader = await buildAgoraAuthHeader(
+      config.agora.appId,
+      config.agora.appCertificate
+    );
+
     const response = await fetch(
       `${config.agora.baseUrl}/${config.agora.appId}/join`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Basic ${Buffer.from(
-            `${config.agora.customerId}:${config.agora.customerSecret}`
-          ).toString('base64')}`,
+          Authorization: authHeader,
         },
         body: JSON.stringify(requestBody),
       }

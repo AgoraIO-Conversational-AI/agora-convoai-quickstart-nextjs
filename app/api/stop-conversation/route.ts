@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server';
+import { buildAgoraAuthHeader } from '@/lib/agora-token';
 import { StopConversationRequest } from '@/types/conversation';
 
-// Helper function to validate and get Agora configuration
 function getValidatedConfig() {
   const agoraConfig = {
-    baseUrl: process.env.NEXT_AGORA_CONVO_AI_BASE_URL,
+    baseUrl: process.env.NEXT_AGORA_CONVO_AI_BASE_URL || '',
     appId: process.env.NEXT_PUBLIC_AGORA_APP_ID || '',
-    customerId: process.env.NEXT_AGORA_CUSTOMER_ID || '',
-    customerSecret: process.env.NEXT_AGORA_CUSTOMER_SECRET || '',
+    appCertificate: process.env.NEXT_AGORA_APP_CERTIFICATE || '',
   };
 
-  if (Object.values(agoraConfig).some((v) => !v || v.trim() === '')) {
+  if (!agoraConfig.baseUrl || !agoraConfig.appId || !agoraConfig.appCertificate) {
     throw new Error('Missing Agora configuration. Check your .env.local file');
   }
 
@@ -27,9 +26,10 @@ export async function POST(request: Request) {
       throw new Error('agent_id is required');
     }
 
-    const plainCredential = `${config.customerId}:${config.customerSecret}`;
-    const encodedCredential = Buffer.from(plainCredential).toString('base64');
-    const authorizationHeader = `Basic ${encodedCredential}`;
+    const authHeader = await buildAgoraAuthHeader(
+      config.appId,
+      config.appCertificate
+    );
 
     const response = await fetch(
       `${config.baseUrl}/${config.appId}/agents/${agent_id}/leave`,
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: authorizationHeader,
+          Authorization: authHeader,
         },
       }
     );
