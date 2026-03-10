@@ -6,13 +6,20 @@ import {
   MessageCircle,
   X,
 } from 'lucide-react';
-import { cn, renderMarkdownToHtml } from '@/lib/utils';
-import { IMessageListItem, EMessageStatus } from '@/lib/message';
+import { cn } from '@/lib/utils';
+import {
+  TurnStatus,
+  type TranscriptHelperItem,
+  type UserTranscription,
+  type AgentTranscription,
+} from 'agora-agent-client-toolkit';
 import { useIsMobile } from '@/hooks/use-mobile';
 
+type MessageItem = TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>;
+
 interface ConvoTextStreamProps {
-  messageList: IMessageListItem[];
-  currentInProgressMessage?: IMessageListItem | null;
+  messageList: MessageItem[];
+  currentInProgressMessage?: MessageItem | null;
   agentUID: string | undefined;
 }
 
@@ -126,7 +133,7 @@ export default function ConvoTextStream({
   // Extra safety: ensure scroll happens after content renders during active streaming
   useEffect(() => {
     if (
-      currentInProgressMessage?.status === EMessageStatus.IN_PROGRESS &&
+      currentInProgressMessage?.status === TurnStatus.IN_PROGRESS &&
       shouldAutoScroll
     ) {
       const timer = setTimeout(scrollToBottom, 100);
@@ -137,7 +144,7 @@ export default function ConvoTextStream({
   const shouldShowStreamingMessage = () => {
     return (
       currentInProgressMessage !== null &&
-      currentInProgressMessage.status === EMessageStatus.IN_PROGRESS &&
+      currentInProgressMessage.status === TurnStatus.IN_PROGRESS &&
       currentInProgressMessage.text.trim().length > 0
     );
   };
@@ -153,11 +160,9 @@ export default function ConvoTextStream({
   };
 
   // Helper to determine if message is from AI
-  const isAIMessage = (message: IMessageListItem) => {
-    // The AI should be uid=0 (agent) OR matching the agentUID if provided
-    return (
-      message.uid === 0 || (agentUID && message.uid.toString() === agentUID)
-    );
+  const isAIMessage = (message: MessageItem) => {
+    // The AI should be uid='0' (agent) OR matching the agentUID if provided
+    return message.uid === '0' || (agentUID && message.uid === agentUID);
   };
 
   // Combine complete messages with in-progress message for rendering
@@ -224,7 +229,7 @@ export default function ConvoTextStream({
                       className={cn(
                         'rounded-[15px] px-3 py-2',
                         isAIMessage(message) ? 'text-left' : 'text-right',
-                        message.status === EMessageStatus.IN_PROGRESS &&
+                        message.status === TurnStatus.IN_PROGRESS &&
                           'animate-pulse'
                       )}
                       style={{
@@ -233,10 +238,9 @@ export default function ConvoTextStream({
                           : '#333333',
                         color: isAIMessage(message) ? '#A0FAFF' : '#FFFFFF',
                       }}
-                      dangerouslySetInnerHTML={{
-                        __html: renderMarkdownToHtml(message.text),
-                      }}
-                    />
+                    >
+                      {message.text}
+                    </div>
                   </div>
                 </div>
               ))}
