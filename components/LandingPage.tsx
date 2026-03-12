@@ -61,8 +61,6 @@ export default function LandingPage() {
       const startRequest: ClientStartRequest = {
         requester_id: responseData.uid,
         channel_name: responseData.channel,
-        input_modalities: ['text'],
-        output_modalities: ['text', 'audio'],
       };
 
       try {

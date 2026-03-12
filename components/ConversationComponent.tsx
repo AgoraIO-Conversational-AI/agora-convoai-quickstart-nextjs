@@ -273,8 +273,6 @@ export default function ConversationComponent({
       const startRequest: ClientStartRequest = {
         requester_id: joinedUID?.toString(),
         channel_name: agoraData.channel,
-        input_modalities: ['text'],
-        output_modalities: ['text', 'audio'],
       };
 
       const response = await fetch('/api/invite-agent', {

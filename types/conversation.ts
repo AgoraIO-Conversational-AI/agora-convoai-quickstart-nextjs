@@ -8,9 +8,6 @@ export interface AgoraTokenData {
 export interface ClientStartRequest {
   requester_id: string;
   channel_name: string;
-  rtc_codec?: number;
-  input_modalities?: string[];
-  output_modalities?: string[];
 }
 
 
