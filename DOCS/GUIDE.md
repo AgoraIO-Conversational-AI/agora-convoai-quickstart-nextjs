@@ -1,6 +1,6 @@
 # Build a Conversational AI App with Next.js and Agora
 
-Conversational AI is all the hype. It allows you to have a real-time conversation with an AI agent, and actually get something done without wasting time typing out your thoughts and trying to format them into a clever prompt. It's a major shift in the way people interact with AI.
+Conversational Voice AI is hype right nowß. It allows you to have a real-time conversation with an AI agent, and actually get something done without wasting time typing out your thoughts and trying to format them into a clever prompt. It's a major shift in the way people interact with AI.
 
 But given the investment that developers and businesses have made in building their own text based agents that run through custom LLM workflows, there's reluctance to adopt this new paradigm. Especially if it means having to give up all that investment or event worse, hobble it by only connecting them as tools/function calls.
 
@@ -42,9 +42,10 @@ Next, install the required Agora dependencies:
 
 - Agora's React SDK: [agora-rtc-react](https://www.npmjs.com/package/agora-rtc-react)
 - Agora's Token Builder: [agora-token](https://www.npmjs.com/package/agora-token)
+- Agora's Agent Server SDK: [agora-agent-server-sdk](https://www.npmjs.com/package/agora-agent-server-sdk) (for inviting and managing the AI agent)
 
 ```bash
-pnpm add agora-rtc-react agora-token
+pnpm add agora-rtc-react agora-token agora-agent-server-sdk
 ```
 
 For UI components, we'll use shadcn/ui in this guide, but you can use any UI library of your choice or create custom components:
@@ -363,7 +364,7 @@ export async function GET(request: NextRequest) {
     console.error('Agora credentials are not set');
     return NextResponse.json(
       { error: 'Agora credentials are not set' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -381,7 +382,12 @@ export async function GET(request: NextRequest) {
 
   try {
     // Generate the token using Agora's Token Builder SDK (RTC + RTM for text streaming)
-    console.log('Building RTC+RTM token with UID:', uid, 'Channel:', channelName);
+    console.log(
+      'Building RTC+RTM token with UID:',
+      uid,
+      'Channel:',
+      channelName,
+    );
     const token = RtcTokenBuilder.buildTokenWithRtm(
       APP_ID,
       APP_CERTIFICATE,
@@ -389,7 +395,7 @@ export async function GET(request: NextRequest) {
       uid,
       RtcRole.PUBLISHER, // User can publish audio/video
       expirationTime,
-      expirationTime
+      expirationTime,
     );
 
     console.log('Token generated successfully (RTC + RTM)');
@@ -403,7 +409,7 @@ export async function GET(request: NextRequest) {
     console.error('Error generating Agora token:', error);
     return NextResponse.json(
       { error: 'Failed to generate Agora token', details: error },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -509,8 +515,6 @@ export default function LandingPage() {
       const startRequest: ClientStartRequest = {
         requester_id: responseData.uid,
         channel_name: responseData.channel,
-        input_modalities: ['text'],
-        output_modalities: ['text', 'audio'],
       };
 
       try {
@@ -812,94 +816,13 @@ Now that we have the basic RTC functionality working, let's integrate Agora's Co
 
 ### Types Setup
 
-Let's get the boring stuff out of the way first. Add some new types to the `types/conversation.ts` file:
+Add the types needed for the agent invitation API to `types/conversation.ts`:
 
 ```typescript
-// Previous types remain the same as before...
-
-// New types for the agent invitation API
+// Types for the agent invitation API
 export interface ClientStartRequest {
   requester_id: string;
   channel_name: string;
-  rtc_codec?: number;
-  input_modalities?: string[];
-  output_modalities?: string[];
-}
-
-interface MicrosoftTTSParams {
-  key: string;
-  region: string;
-  voice_name: string;
-  rate?: number;
-  volume?: number;
-}
-
-interface ElevenLabsTTSParams {
-  key: string;
-  voice_id: string;
-  model_id: string;
-}
-
-export enum TTSVendor {
-  Microsoft = 'microsoft',
-  ElevenLabs = 'elevenlabs',
-}
-
-export interface TTSConfig {
-  vendor: TTSVendor;
-  params: MicrosoftTTSParams | ElevenLabsTTSParams;
-}
-
-// Agora API request body
-export interface AgoraStartRequest {
-  name: string;
-  properties: {
-    channel: string;
-    token: string;
-    agent_rtc_uid: string;
-    remote_rtc_uids: string[];
-    enable_string_uid?: boolean;
-    idle_timeout?: number;
-    advanced_features?: {
-      enable_aivad?: boolean;
-      enable_bhvs?: boolean;
-    };
-    asr: {
-      language: string;
-      task?: string;
-    };
-    llm: {
-      url?: string;
-      api_key?: string;
-      system_messages: Array<{
-        role: string;
-        content: string;
-      }>;
-      greeting_message: string;
-      failure_message: string;
-      max_history?: number;
-      input_modalities?: string[];
-      output_modalities?: string[];
-      params: {
-        model: string;
-        max_tokens: number;
-        temperature?: number;
-        top_p?: number;
-      };
-    };
-    vad: {
-      silence_duration_ms: number;
-      speech_duration_ms?: number;
-      threshold?: number;
-      interrupt_duration_ms?: number;
-      prefix_padding_ms?: number;
-    };
-    tts: TTSConfig;
-  };
-}
-
-export interface StopConversationRequest {
-  agent_id: string;
 }
 
 export interface AgentResponse {
@@ -909,217 +832,132 @@ export interface AgentResponse {
 }
 ```
 
-These new types give some insight on all the parts we'll be assembling in the next steps. We'll take the client request, and use it to configure the AgoraStartRequest and send it to Agora's Conversational AI Engine. Agora's Convo AI engine will add the agent to the conversation.
-
 ### Invite Agent Route
 
-Create the route file at `app/api/invite-agent/route.ts`:
+Create `app/api/invite-agent/route.ts`:
 
 ```bash
 mkdir app/api/invite-agent
 touch app/api/invite-agent/route.ts
 ```
 
-Add the following code:
-
 ```typescript
-import { NextResponse } from 'next/server';
-import { RtcTokenBuilder, RtcRole } from 'agora-token';
+import { NextRequest, NextResponse } from 'next/server';
 import {
-  ClientStartRequest,
-  AgentResponse,
-  TTSVendor,
-} from '@/types/conversation';
+  AgoraClient,
+  Agent,
+  Area,
+  ExpiresIn,
+  OpenAI,
+  ElevenLabsTTS,
+  DeepgramSTT,
+} from 'agora-agent-server-sdk';
+import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 
-// Helper function to validate and get all configuration
-function getValidatedConfig() {
-  // Validate Agora Configuration
-  const agoraConfig = {
-    baseUrl: process.env.NEXT_AGORA_CONVO_AI_BASE_URL || '',
-    appId: process.env.NEXT_PUBLIC_AGORA_APP_ID || '',
-    appCertificate: process.env.NEXT_AGORA_APP_CERTIFICATE || '',
-    customerId: process.env.NEXT_AGORA_CUSTOMER_ID || '',
-    customerSecret: process.env.NEXT_AGORA_CUSTOMER_SECRET || '',
-    agentUid: process.env.NEXT_AGENT_UID || 'Agent',
-  };
+// System prompt — swap this out to change what the agent talks about.
+const ADA_PROMPT = `You are **Ada**, a developer advocate AI from **Agora**. You help developers understand and build with Agora's Conversational AI platform. Respond concisely and naturally as if in a spoken conversation.`;
 
-  if (Object.values(agoraConfig).some((v) => v === '')) {
-    throw new Error('Missing Agora configuration. Check your .env.local file');
-  }
+// First thing the agent says when a user joins the channel.
+const GREETING = `Hi there! I'm Ada, your virtual assistant from Agora. What kind of project do you have in mind?`;
 
-  // Validate LLM Configuration
-  const llmConfig = {
-    url: process.env.NEXT_LLM_URL,
-    api_key: process.env.NEXT_LLM_API_KEY,
-    model: process.env.NEXT_LLM_MODEL,
-  };
-
-  // Get TTS Vendor
-  const ttsVendor =
-    (process.env.NEXT_TTS_VENDOR as TTSVendor) || TTSVendor.Microsoft;
-
-  // Get Modalities Configuration
-  const modalitiesConfig = {
-    input: process.env.NEXT_INPUT_MODALITIES?.split(',') || ['text'],
-    output: process.env.NEXT_OUTPUT_MODALITIES?.split(',') || [
-      'text',
-      'audio',
-    ],
-  };
-
-  return {
-    agora: agoraConfig,
-    llm: llmConfig,
-    ttsVendor,
-    modalities: modalitiesConfig,
-  };
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
 }
 
-// Helper function to get TTS configuration based on vendor
-function getTTSConfig(vendor: TTSVendor) {
-  if (vendor === TTSVendor.Microsoft) {
-    return {
-      vendor: TTSVendor.Microsoft,
-      params: {
-        key: process.env.NEXT_MICROSOFT_TTS_KEY,
-        region: process.env.NEXT_MICROSOFT_TTS_REGION,
-        voice_name:
-          process.env.NEXT_MICROSOFT_TTS_VOICE_NAME ||
-          'en-US-AriaNeural',
-        rate: parseFloat(process.env.NEXT_MICROSOFT_TTS_RATE || '1.0'),
-        volume: parseFloat(
-          process.env.NEXT_MICROSOFT_TTS_VOLUME || '100.0'
-        ),
-      },
-    };
-  } else if (vendor === TTSVendor.ElevenLabs) {
-    return {
-      vendor: TTSVendor.ElevenLabs,
-      params: {
-        key: process.env.NEXT_ELEVENLABS_API_KEY,
-        model_id: process.env.NEXT_ELEVENLABS_MODEL_ID,
-        voice_id: process.env.NEXT_ELEVENLABS_VOICE_ID,
-      },
-    };
-  }
+// Set these in .env.local (see env vars reference at end of guide)
+const appId =
+  process.env.NEXT_PUBLIC_AGORA_APP_ID || requireEnv('NEXT_AGORA_APP_ID');
+const appCertificate = requireEnv('NEXT_AGORA_APP_CERTIFICATE');
+// Must match NEXT_PUBLIC_AGENT_UID on the client
+const agentUid = process.env.NEXT_PUBLIC_AGENT_UID || 'Agent';
+// Any OpenAI-compatible endpoint (OpenAI, Azure, Groq, etc.)
+const llmUrl = requireEnv('NEXT_LLM_URL');
+const llmApiKey = requireEnv('NEXT_LLM_API_KEY');
+const deepgramApiKey = requireEnv('NEXT_DEEPGRAM_API_KEY');
+const elevenLabsApiKey = requireEnv('NEXT_ELEVENLABS_API_KEY');
+// Find your voice at https://elevenlabs.io/app/voice-lab
+const ELEVENLABS_VOICE_ID = 'cgSgspJ2msm6clMCkdW9';
 
-  throw new Error(`Unsupported TTS vendor: ${vendor}`);
-}
-
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    // Get our configuration
-    const config = getValidatedConfig();
     const body: ClientStartRequest = await request.json();
-    const { requester_id, channel_name, input_modalities, output_modalities } =
-      body;
+    const { requester_id, channel_name } = body;
 
-    // Generate a unique token for the AI agent
-    const timestamp = Date.now();
-    const expirationTime = Math.floor(timestamp / 1000) + 3600;
-
-    const token = RtcTokenBuilder.buildTokenWithUid(
-      config.agora.appId,
-      config.agora.appCertificate,
-      channel_name,
-      config.agora.agentUid,
-      RtcRole.PUBLISHER,
-      expirationTime,
-      expirationTime
-    );
-
-    // Check if we're using string UIDs
-    const isStringUID = (str: string) => /[a-zA-Z]/.test(str);
-
-    // Create a descriptive name for this conversation
-    const uniqueName = `conversation-${timestamp}-${Math.random()
-      .toString(36)
-      .substring(2, 8)}`;
-
-    // Get the appropriate TTS configuration
-    const ttsConfig = getTTSConfig(config.ttsVendor);
-
-    // Prepare the request to the Agora Conversational AI API
-    const requestBody = {
-      name: uniqueName,
-      properties: {
-        channel: channel_name,
-        token: token,
-        agent_rtc_uid: config.agora.agentUid,
-        remote_rtc_uids: [requester_id],
-        enable_string_uid: isStringUID(config.agora.agentUid),
-        idle_timeout: 30,
-        // ASR (Automatic Speech Recognition) settings
-        asr: {
-          language: 'en-US',
-          task: 'conversation',
-        },
-        // LLM (Large Language Model) settings
-        llm: {
-          url: config.llm.url,
-          api_key: config.llm.api_key,
-          system_messages: [
-            {
-              role: 'system',
-              content:
-                'You are a helpful assistant. Respond concisely and naturally as if in a spoken conversation.',
-            },
-          ],
-          greeting_message: 'Hello! How can I assist you today?',
-          failure_message: 'Please wait a moment while I process that.',
-          max_history: 10,
-          params: {
-            model: config.llm.model || 'gpt-3.5-turbo',
-            max_tokens: 1024,
-            temperature: 0.7,
-            top_p: 0.95,
-          },
-          input_modalities: input_modalities || config.modalities.input,
-          output_modalities: output_modalities || config.modalities.output,
-        },
-        // VAD (Voice Activity Detection) settings
-        vad: {
-          silence_duration_ms: 480,
-          speech_duration_ms: 15000,
-          threshold: 0.5,
-          interrupt_duration_ms: 160,
-          prefix_padding_ms: 300,
-        },
-        // TTS (Text-to-Speech) settings
-        tts: ttsConfig,
-      },
-    };
-
-    // Send the request to the Agora API
-    const response = await fetch(
-      `${config.agora.baseUrl}/${config.agora.appId}/join`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Basic ${Buffer.from(
-            `${config.agora.customerId}:${config.agora.customerSecret}`
-          ).toString('base64')}`,
-        },
-        body: JSON.stringify(requestBody),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Agent start response:', {
-        status: response.status,
-        body: errorText,
-      });
-      throw new Error(
-        `Failed to start conversation: ${response.status} ${errorText}`
+    if (!channel_name || !requester_id) {
+      return NextResponse.json(
+        { error: 'channel_name and requester_id are required' },
+        { status: 400 },
       );
     }
 
-    // Parse and return the response, which includes the agentID.
-    // We'll need the agentID later, when its time to remove the agent.
-    const data: AgentResponse = await response.json();
-    return NextResponse.json(data);
+    // Authenticates API calls to the Agora Conversational AI service
+    const client = new AgoraClient({
+      area: Area.US,
+      appId,
+      appCertificate,
+    });
+
+    const agent = new Agent({
+      name: `conversation-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      instructions: ADA_PROMPT,
+      greeting: GREETING,
+      failureMessage: 'Please wait a moment.',
+      maxHistory: 50,
+      // VAD: how long to wait after user stops speaking before end of turn
+      turnDetection: {
+        type: 'agora_vad',
+        silence_duration_ms: 480,
+        threshold: 0.5,
+        interrupt_duration_ms: 160,
+        prefix_padding_ms: 300,
+      },
+      // RTM needed for transcript events; enable_tools for MCP
+      advancedFeatures: { enable_rtm: true, enable_tools: true },
+    })
+      .withStt(
+        new DeepgramSTT({
+          apiKey: deepgramApiKey,
+          model: 'nova-3',
+          language: 'en',
+        }),
+      )
+      .withLlm(
+        new OpenAI({
+          url: llmUrl,
+          apiKey: llmApiKey,
+          model: 'gpt-4o',
+          greetingMessage: GREETING,
+          failureMessage: 'Please wait a moment.',
+          maxHistory: 15,
+          params: { max_tokens: 1024, temperature: 0.7, top_p: 0.95 },
+        }),
+      )
+      .withTts(
+        new ElevenLabsTTS({
+          key: elevenLabsApiKey,
+          modelId: 'eleven_flash_v2_5',
+          voiceId: ELEVENLABS_VOICE_ID,
+        }),
+      );
+
+    // remoteUids restricts the agent to only process audio from this user
+    const session = agent.createSession(client, {
+      channel: channel_name,
+      agentUid,
+      remoteUids: [requester_id],
+      idleTimeout: 30,
+      expiresIn: ExpiresIn.hours(1),
+    });
+
+    const agentId = await session.start();
+
+    return NextResponse.json({
+      agent_id: agentId,
+      create_ts: Math.floor(Date.now() / 1000),
+      state: 'RUNNING',
+    } as AgentResponse);
   } catch (error) {
     console.error('Error starting conversation:', error);
     return NextResponse.json(
@@ -1129,27 +967,17 @@ export async function POST(request: Request) {
             ? error.message
             : 'Failed to start conversation',
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 ```
 
-Since Agora supports multiple TTS providers, the TTS section includes the configuration for both Microsoft Azure TTS and ElevenLabs and uses the `TTSVendor` env variable to determine which TTS config to use.
-
-Choose the TTS provider based on your needs. Once you choose a vendor, you'll also need to choose a voice. To help you get started, here are some links to the voice galleries for each provider:
-
-- [Microsoft Azure TTS Voice Gallery](https://speech.microsoft.com/portal/voicegallery): Offers a wide range of natural-sounding voices.
-
-- [ElevenLabs Voice Library](https://elevenlabs.io/voice-library): Known for highly realistic and emotional voices.
-
-> **Note:** This route loads a number of environment variables. Make sure to set these in your `.env.local` file. At the end of this guide, I've included a list of all the environment variables you'll need to set.
+> **Note:** Set required env vars in `.env.local`. See the reference at the end of this guide.
 
 ### Stop Conversation Route
 
-After the agent joins the conversation, we need a way to remove them from the conversation. This is where the `stop-conversation` route comes in, it takes the agentID and sends a request to the Agora's Conversational AI Engine to remove the agent from the channel.
-
-Create a file at `app/api/stop-conversation/route.ts`:
+Create `app/api/stop-conversation/route.ts`:
 
 ```bash
 mkdir app/api/stop-conversation
@@ -1160,61 +988,36 @@ Add the following code:
 
 ```typescript
 import { NextResponse } from 'next/server';
+import { AgoraClient, Area } from 'agora-agent-server-sdk';
 import { StopConversationRequest } from '@/types/conversation';
-
-// Helper function to validate and get Agora configuration
-function getValidatedConfig() {
-  const agoraConfig = {
-    baseUrl: process.env.NEXT_AGORA_CONVO_AI_BASE_URL,
-    appId: process.env.NEXT_PUBLIC_AGORA_APP_ID || '',
-    customerId: process.env.NEXT_AGORA_CUSTOMER_ID || '',
-    customerSecret: process.env.NEXT_AGORA_CUSTOMER_SECRET || '',
-  };
-
-  if (Object.values(agoraConfig).some((v) => !v || v.trim() === '')) {
-    throw new Error('Missing Agora configuration. Check your .env.local file');
-  }
-
-  return agoraConfig;
-}
 
 export async function POST(request: Request) {
   try {
-    const config = getValidatedConfig();
     const body: StopConversationRequest = await request.json();
     const { agent_id } = body;
 
     if (!agent_id) {
-      throw new Error('agent_id is required');
-    }
-
-    // Create authentication header
-    const plainCredential = `${config.customerId}:${config.customerSecret}`;
-    const encodedCredential = Buffer.from(plainCredential).toString('base64');
-    const authorizationHeader = `Basic ${encodedCredential}`;
-
-    // Send request to Agora API to stop the conversation
-    const response = await fetch(
-      `${config.baseUrl}/${config.appId}/agents/${agent_id}/leave`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authorizationHeader,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Agent stop response:', {
-        status: response.status,
-        body: errorText,
-      });
-      throw new Error(
-        `Failed to stop conversation: ${response.status} ${errorText}`
+      return NextResponse.json(
+        { error: 'agent_id is required' },
+        { status: 400 },
       );
     }
+
+    const appId =
+      process.env.NEXT_PUBLIC_AGORA_APP_ID || process.env.NEXT_AGORA_APP_ID;
+    const appCertificate = process.env.NEXT_AGORA_APP_CERTIFICATE;
+    if (!appId || !appCertificate) {
+      throw new Error(
+        'Missing Agora configuration. Set NEXT_PUBLIC_AGORA_APP_ID and NEXT_AGORA_APP_CERTIFICATE.',
+      );
+    }
+
+    const client = new AgoraClient({
+      area: Area.US,
+      appId,
+      appCertificate,
+    });
+    await client.stopAgent(agent_id);
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -1226,9 +1029,17 @@ export async function POST(request: Request) {
             ? error.message
             : 'Failed to stop conversation',
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
+}
+```
+
+Add `StopConversationRequest` to your `types/conversation.ts`:
+
+```typescript
+export interface StopConversationRequest {
+  agent_id: string;
 }
 ```
 
@@ -1415,7 +1226,7 @@ export default function ConversationComponent({
   onEndConversation,
 }: ConversationComponentProps) {
   // ... state: isEnabled, joinedUID, agentUID, isAgentConnected, isConnecting,
-  //     messageList, currentInProgressMessage (from ConversationalAIAPI - see TEXT_STREAMING_GUIDE) ...
+  //     messageList, currentInProgressMessage (from agora-client-toolkit - see TEXT_STREAMING_GUIDE) ...
 
   // Handle remote user events - ie when AI agent joins/leaves
   useClientEvent(client, 'user-joined', (user) => {
@@ -1501,7 +1312,7 @@ export default function ConversationComponent({
 }
 ```
 
-The agent is invited by the landing page when the user clicks "Try it now!". For text streaming (transcriptions), the app uses `ConversationalAIAPI` with RTM—see [TEXT_STREAMING_GUIDE.md](./TEXT_STREAMING_GUIDE.md) for setup. When using RTM, the token renewal handler must also renew the RTM token. The `onEndConversation` callback (passed from the landing page) stops the agent via the API before hiding the conversation.
+The agent is invited by the landing page when the user clicks "Try it now!". For text streaming (transcriptions), the app uses the `agora-client-toolkit` with RTM—see [TEXT_STREAMING_GUIDE.md](./TEXT_STREAMING_GUIDE.md) for setup. When using RTM, the token renewal handler must also renew the RTM token. The `onEndConversation` callback (passed from the landing page) stops the agent via the API before hiding the conversation.
 
 ## Audio Visualization (Optional)
 
@@ -1761,7 +1572,7 @@ Now that we have all the components in place, let's finish by testing the applic
 To start the development server:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 > **Note:** Make sure your `.env` file is properly configured with all the necessary credentials. There is a complete list of environment variables at the end of this guide.
@@ -1777,19 +1588,16 @@ Open your browser to `http://localhost:3000` and test.
 ### Common Issues and Solutions
 
 - **Agent not joining**:
-
   - Verify your Agora Conversational AI credentials
   - Check console for specific error messages
   - Ensure your TTS configuration is valid
 
 - **Audio not working**:
-
   - Check browser permissions for microphone access
   - Verify the microphone is enabled in the app
   - Check if audio tracks are properly published
 
 - **Token errors**:
-
   - Verify App ID and App Certificate are correct
   - Ensure token renewal logic is working
   - Check for proper error handling in token-related functions
@@ -1805,47 +1613,33 @@ Agora Conversational AI Engine supports a number of customizations.
 
 ### Customizing the Agent
 
-In the `/agent/invite` endpoint, the `system_message` shapes how the AI agent responds, giving it a specific personality and communication style.
-
-Modify the `system_message` to customize the agents prompt:
+In the invite-agent route, the `instructions` prop shapes how the AI agent responds. Modify the `ADA_PROMPT` constant to customize the agent's personality:
 
 ```typescript
 // In app/api/invite-agent/route.ts
-system_messages: [
-  {
-    role: 'system',
-    content:
-      'You are a friendly and helpful assistant named Alex. Your personality is warm, patient, and slightly humorous. When speaking, use a conversational tone with occasional casual expressions. Your responses should be concise but informative, aimed at making complex topics accessible to everyone. If you don't know something, admit it honestly rather than guessing. When appropriate, offer follow-up questions to help guide the conversation.',
-  },
-],
+const ADA_PROMPT = `You are a friendly and helpful assistant named Alex. Your personality is warm, patient, and slightly humorous...`;
 ```
 
-You can also update the greeting to control the initial message it speaks into the channel.
+Update the `greeting` to control the initial message the agent speaks when joining the channel:
 
 ```typescript
-llm {
-    greeting_message: 'Hello! How can I assist you today?',
-    failure_message: 'Please wait a moment.',
-}
+const GREETING = `Hello! How can I assist you today?`;
 ```
 
 ### Customizing the Voice
 
-Choose the right voice for your application by exploring the voice libraries:
-
-- For Microsoft Azure TTS: Visit the [Microsoft Azure TTS Voice Gallery](https://speech.microsoft.com/portal/voicegallery)
-- For ElevenLabs: Explore the [ElevenLabs Voice Library](https://elevenlabs.io/voice-library)
+The SDK supports multiple TTS providers. This guide uses ElevenLabs. Choose a voice from the [ElevenLabs Voice Library](https://elevenlabs.io/voice-library) and set `voiceId` in the `ElevenLabsTTS` config. For Microsoft Azure TTS, use `MicrosoftTTS` from the SDK instead.
 
 ### Fine-tuning Voice Activity Detection
 
-Adjust VAD settings to optimize conversation flow:
+Adjust `turnDetection` in the Agent config to optimize conversation flow:
 
 ```typescript
 // In app/api/invite-agent/route.ts
-vad: {
-  silence_duration_ms: 600,      // How long to wait after silence to end turn (Increase for longer pauses before next turns)
-  speech_duration_ms: 10000,     // Maximum duration for a single speech segment (force end of turn after this time)
-  threshold: 0.6,                // Sensitivity to background noise (Higher values require louder speech to trigger)
+turnDetection: {
+  type: 'agora_vad',
+  silence_duration_ms: 600,      // How long to wait after silence to end turn
+  threshold: 0.6,                // Sensitivity to background noise
   interrupt_duration_ms: 200,    // How quickly interruptions are detected
   prefix_padding_ms: 400,        // How much audio to capture before speech is detected
 },
@@ -1853,40 +1647,24 @@ vad: {
 
 # Complete Environment Variables Reference
 
-Here's a complete list of environment variables for your `.env` file:
+Here's a complete list of environment variables for your `.env.local` file (SDK-based implementation):
 
 ```
 # Agora Configuration
 NEXT_PUBLIC_AGORA_APP_ID=
+NEXT_AGORA_APP_ID=
 NEXT_AGORA_APP_CERTIFICATE=
-NEXT_AGORA_CUSTOMER_ID=
-NEXT_AGORA_CUSTOMER_SECRET=
+NEXT_PUBLIC_AGENT_UID=Agent
 
-NEXT_AGORA_CONVO_AI_BASE_URL=https://api.agora.io/api/conversational-ai-agent/v2/projects/
-NEXT_AGENT_UID=333
-
-# LLM Configuration
+# LLM Configuration (OpenAI or compatible)
 NEXT_LLM_URL=https://api.openai.com/v1/chat/completions
-NEXT_LLM_MODEL=gpt-4
 NEXT_LLM_API_KEY=
-# TTS Configuration
-NEXT_TTS_VENDOR=microsoft
 
-# Text-to-Speech Configuration
-NEXT_MICROSOFT_TTS_KEY=
-NEXT_MICROSOFT_TTS_REGION=eastus
-NEXT_MICROSOFT_TTS_VOICE_NAME=en-US-AndrewMultilingualNeural
-NEXT_MICROSOFT_TTS_RATE=1.1
-NEXT_MICROSOFT_TTS_VOLUME=70
+# STT - Deepgram
+NEXT_DEEPGRAM_API_KEY=
 
-# ElevenLabs Configuration
+# TTS - ElevenLabs
 NEXT_ELEVENLABS_API_KEY=
-NEXT_ELEVENLABS_VOICE_ID=XrExE9yKIg1WjnnlVkGX
-NEXT_ELEVENLABS_MODEL_ID=eleven_flash_v2_5
-
-# Modalities Configuration
-NEXT_INPUT_MODALITIES=text
-NEXT_OUTPUT_MODALITIES=text,audio
 ```
 
 ## Next Steps
