@@ -834,12 +834,14 @@ export interface AgentResponse {
 
 ### Invite Agent Route
 
-Create `app/api/invite-agent/route.ts`:
+The `agora-agent-server-sdk` simplifies agent creation by handling token generation and the Agora REST API internally. Create the route file at `app/api/invite-agent/route.ts`:
 
 ```bash
 mkdir app/api/invite-agent
 touch app/api/invite-agent/route.ts
 ```
+
+Add the following code:
 
 ```typescript
 import { NextRequest, NextResponse } from 'next/server';
@@ -854,7 +856,7 @@ import {
 } from 'agora-agent-server-sdk';
 import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 
-// System prompt — swap this out to change what the agent talks about.
+// System prompt that defines the agent's personality and behavior
 const ADA_PROMPT = `You are **Ada**, a developer advocate AI from **Agora**. You help developers understand and build with Agora's Conversational AI platform. Respond concisely and naturally as if in a spoken conversation.`;
 
 // First thing the agent says when a user joins the channel.
@@ -973,11 +975,15 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-> **Note:** Set required env vars in `.env.local`. See the reference at the end of this guide.
+The SDK supports multiple STT, LLM, and TTS providers. This example uses Deepgram for speech-to-text, OpenAI for the LLM, and ElevenLabs for text-to-speech. You can swap these for other vendors supported by the SDK.
+
+> **Note:** Set all required environment variables in your `.env.local` file. See the environment variables reference at the end of this guide.
 
 ### Stop Conversation Route
 
-Create `app/api/stop-conversation/route.ts`:
+After the agent joins the conversation, we need a way to remove them. The `stop-conversation` route uses the `agora-agent-server-sdk` to stop the agent.
+
+Create a file at `app/api/stop-conversation/route.ts`:
 
 ```bash
 mkdir app/api/stop-conversation
