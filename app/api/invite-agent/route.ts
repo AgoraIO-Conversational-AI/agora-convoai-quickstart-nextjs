@@ -7,7 +7,7 @@ import {
   OpenAI,
   ElevenLabsTTS,
   DeepgramSTT,
-} from 'agora-agent-server-sdk';
+} from 'agent-server-sdk-ts';
 import { ClientStartRequest, AgentResponse } from '@/types/conversation';
 
 // System prompt that defines the agent's personality and behavior.
@@ -38,7 +38,7 @@ If you don't know a specific fact about Agora, say so plainly and suggest checki
 - **Guide, don't lecture**: Unlock the next step, not everything at once.`;
 
 // First thing the agent says when a user joins the channel.
-const GREETING = `Hi there! I'm Ada, your virtual assistant from Agora. What kind of project do you have in mind?`;
+const GREETING = `Hi there! I'm Ada, your virtual assistant from Agora. How can I help?`;
 
 // ---------------------------------------------------------------------------
 // Validate env vars once at module load — misconfiguration surfaces on startup
