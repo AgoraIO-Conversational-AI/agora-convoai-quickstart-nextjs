@@ -13,25 +13,12 @@ import { randomUUID } from 'crypto';
  * the streamText call.
  */
 export async function POST(request: NextRequest) {
-  // ── Auth ─────────────────────────────────────────────────────────────────
-  // Agora forwards the api_key we set in invite-agent as a Bearer token.
-  // If NEXT_CUSTOM_LLM_SECRET is configured, enforce it so that only Agora
-  // (or whoever knows the secret) can call this endpoint.
-  const sharedSecret = process.env.NEXT_CUSTOM_LLM_SECRET;
-  if (sharedSecret) {
-    const authHeader = request.headers.get('authorization') ?? '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-    if (token !== sharedSecret) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
-
   // ── Config ────────────────────────────────────────────────────────────────
   const apiKey = process.env.NEXT_LLM_API_KEY;
   const llmUrl = process.env.NEXT_LLM_URL;
-  // Always use the server-configured model — never trust body.model to prevent
-  // callers from routing requests to arbitrary models.
-  const modelId = process.env.NEXT_LLM_MODEL || 'gpt-4o';
+  // Model is pinned here — change this to switch models without other config changes.
+  // Never use body.model; that would allow callers to route to arbitrary models.
+  const modelId = 'gpt-4o';
 
   if (!apiKey || !llmUrl) {
     return NextResponse.json(

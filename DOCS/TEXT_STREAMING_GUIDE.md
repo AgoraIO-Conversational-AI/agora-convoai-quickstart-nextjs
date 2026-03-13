@@ -6,6 +6,16 @@ So, you've built an amazing conversational AI app using Agora, maybe following o
 
 This guide focuses on adding real-time text transcriptions to your audio-based AI conversations. Think of it as subtitles for your AI chat.
 
+## Prerequisites
+
+Install the Agora client toolkit for text streaming:
+
+```bash
+pnpm add agora-client-toolkit
+```
+
+The `agora-client-toolkit` provides the `AgoraVoiceAI` class (and related types) for receiving transcription data over RTM, managing message state, and emitting updates via events.
+
 Why bother adding text when the primary interaction is voice? Good question! Here's why it's a game-changer:
 
 1.  **Accessibility is Key**: Text opens up your app to users with hearing impairments. Inclusivity matters!
@@ -20,21 +30,21 @@ Ready to add this superpower to your app? Let's dive in.
 
 Adding text streaming involves three main players in your codebase:
 
-1.  **The Brains (`lib/conversational-ai-api/`)**: This is the `ConversationalAIAPI` toolkit, provided by Agora. It uses both RTC and RTM to receive transcription data, manages message states (e.g., "is the AI still talking?"), and emits updates via events.
+1.  **The Brains (`agora-client-toolkit`)**: The `AgoraVoiceAI` class from the `agora-client-toolkit` package. It uses both RTC and RTM to receive transcription data, manages message states (e.g., "is the AI still talking?"), and emits updates via events.
 2.  **The Face (`components/ConvoTextStream.tsx`)**: This is your UI component. It takes the processed messages from the `ConversationComponent` and displays them. Think chat bubbles, scrolling, and animations for streaming text. Customize it to match your app's look and feel.
-3.  **The Conductor (`components/ConversationComponent.tsx`)**: This component handles the Agora RTC/RTM connection, initializes `ConversationalAIAPI`, subscribes to `TRANSCRIPT_UPDATED` events, maps the data to `IMessageListItem`, and passes it down to `ConvoTextStream`.
+3.  **The Conductor (`components/ConversationComponent.tsx`)**: This component handles the Agora RTC/RTM connection, initializes `AgoraVoiceAI` from `agora-client-toolkit`, subscribes to transcript events, maps the data to message items, and passes it down to `ConvoTextStream`.
 
 Here's a simplified view of how they communicate:
 
 ```mermaid
 flowchart LR
-    A[User/AI via Agora RTC/RTM] -- Raw Data --> B(ConversationalAIAPI)
+    A[User/AI via Agora RTC/RTM] -- Raw Data --> B(AgoraVoiceAI)
     B -- TRANSCRIPT_UPDATED --> C(ConversationComponent State)
     C -- Data Props --> D(ConvoTextStream UI)
     A --> C
 ```
 
-Essentially, raw data comes from Agora via RTM, `ConversationalAIAPI` processes it and emits `TRANSCRIPT_UPDATED`, the `ConversationComponent` maps the event payload to `IMessageListItem` and updates state, then passes the data to `ConvoTextStream` for display.
+Essentially, raw data comes from Agora via RTM, `AgoraVoiceAI` processes it and emits transcript events, the `ConversationComponent` maps the event payload to message items and updates state, then passes the data to `ConvoTextStream` for display.
 
 ## Following the Data: The Message Lifecycle
 
@@ -42,7 +52,7 @@ Understanding how a transcription message travels from the network to the screen
 
 ```mermaid
 graph LR
-    A[Raw Data via RTM] --> B(ConversationalAIAPI Processes);
+    A[Raw Data via RTM] --> B(AgoraVoiceAI Processes);
     B --> C(TRANSCRIPT_UPDATED Event);
     C --> D(ConversationComponent Maps & Updates State);
     D --> E(UI Renders the Update);
@@ -50,7 +60,7 @@ graph LR
     subgraph RTM [Agora RTM]
         A
     end
-    subgraph API [ConversationalAIAPI]
+    subgraph API [AgoraVoiceAI]
         B
         C
     end
@@ -63,9 +73,9 @@ graph LR
 ```
 
 1.  **RTM Stream**: Transcription data arrives via Agora RTM. This can be user speech or AI agent output.
-2.  **Message Processing**: The `ConversationalAIAPI` processes these raw chunks, identifies user vs. agent, and tracks turn status.
+2.  **Message Processing**: The `AgoraVoiceAI` processes these raw chunks, identifies user vs. agent, and tracks turn status.
 3.  **Event Emission**: The API emits `TRANSCRIPT_UPDATED` with a `chatHistory` array of `ITranscriptHelperItem` objects.
-4.  **State Updates**: The `ConversationComponent` maps the event payload to `IMessageListItem` (e.g., `ETurnStatus.END` → `EMessageStatus.END`), separates completed and in-progress messages, and updates React state.
+4.  **State Updates**: The `ConversationComponent` maps the event payload to message items (e.g., `TurnStatus.END` → completed), separates completed and in-progress messages, and updates React state.
 5.  **UI Rendering**: React re-renders `ConvoTextStream` with the new message list, displaying the latest text.
 
 This pipeline ensures text appears smoothly and in real-time, handling messages that are still streaming ("in-progress"), fully delivered ("completed"), or cut off ("interrupted").
@@ -94,7 +104,7 @@ export interface IAgentTranscription extends ITranscriptionBase {
   object: ETranscriptionObjectType.AGENT_TRANSCRIPTION; // Identifies as "assistant.transcription"
   quiet: boolean; // Was this generated during a quiet period? (Useful for debugging)
   turn_seq_id: number; // Unique ID for this conversational turn
-  turn_status: EMessageStatus; // Is this message IN_PROGRESS, END, or INTERRUPTED?
+  turn_status: TurnStatus; // Is this message IN_PROGRESS, END, or INTERRUPTED?
 }
 ```
 
@@ -124,9 +134,9 @@ The API intelligently handles these different types:
 
 It juggles all this using an internal queue and state management so your UI component doesn't have to worry about the raw complexity.
 
-## Meet the `ConversationalAIAPI`: The Heart of Text Streaming
+## Meet the `AgoraVoiceAI`: The Heart of Text Streaming
 
-The `ConversationalAIAPI` (`lib/conversational-ai-api/`) is Agora's toolkit for text streaming. It uses both RTC and RTM. Its main jobs are:
+The `AgoraVoiceAI` class from the `agora-client-toolkit` package is Agora's toolkit for text streaming. It uses both RTC and RTM. Its main jobs are:
 
 1.  **Listening**: It subscribes to RTM channels to receive transcription data.
 2.  **Processing**: It decodes messages, identifies user vs. agent, and tracks turn status.
@@ -138,69 +148,68 @@ The `ConversationalAIAPI` (`lib/conversational-ai-api/`) is Agora's toolkit for 
 
 #### Message Status: Is it Done Yet?
 
-Every message has a status. The API uses `ETurnStatus`; your UI uses `EMessageStatus` from `lib/message.ts`:
+Every message has a status. The `agora-client-toolkit` uses `TurnStatus`; your UI can use the same or map to your own types:
 
 ```typescript
-export enum EMessageStatus {
+// From agora-client-toolkit
+export enum TurnStatus {
   IN_PROGRESS = 0, // Still being received/streamed (e.g., AI is talking)
-  END = 1, // Finished normally.
+  END = 1,         // Finished normally.
   INTERRUPTED = 2, // Cut off before completion.
 }
 ```
 
-This helps your UI know how to display each message (e.g., add a "..." or a pulsing animation for `IN_PROGRESS` messages).
+This helps your UI know how to display each message (e.g., add a "..." or a pulsing animation for in-progress messages).
 
 #### Render Modes
 
-The API supports different render modes:
+The toolkit supports different render modes via `TranscriptHelperMode`:
 
 ```typescript
-export enum ETranscriptHelperMode {
+// From agora-client-toolkit
+export enum TranscriptHelperMode {
   TEXT = 'text',   // Treats each agent message chunk as a complete block.
   WORD = 'word',   // Word-by-word streaming when timing info is available.
   CHUNK = 'chunk', // Chunk-based streaming.
 }
 ```
 
-This quickstart uses `ETranscriptHelperMode.TEXT`.
+This quickstart uses `TranscriptHelperMode.TEXT`.
 
 #### The Output: What Your UI Gets
 
-The `TRANSCRIPT_UPDATED` event provides `ITranscriptHelperItem[]`. You map it to `IMessageListItem` for display:
+The `TRANSCRIPT_UPDATED` event provides `TranscriptHelperItem[]`. You can use these directly or map to your own display types:
 
 ```typescript
-export interface IMessageListItem {
-  uid: number;      // User's UID or Agent's UID (often 0).
-  turn_id: number;  // Conversational turn ID.
-  text: string;     // The actual words to display.
-  status: EMessageStatus; // IN_PROGRESS, END, or INTERRUPTED.
-}
+// TranscriptHelperItem from agora-client-toolkit includes:
+// uid, turn_id, text, status (TurnStatus), etc.
 ```
 
 ### Wiring Up the API
 
-Initialize `ConversationalAIAPI` inside `ConversationComponent` in a `useEffect` when the RTC client is connected and you have an RTM client.
+Initialize `AgoraVoiceAI` from `agora-client-toolkit` inside `ConversationComponent` in a `useEffect` when the RTC client is connected and you have an RTM client.
 
 ```typescript
 // Inside ConversationComponent.tsx - TRANSCRIPT_UPDATED handler
+import { AgoraVoiceAI, AgoraVoiceAIEvents } from 'agora-client-toolkit';
 
-api.on(EConversationalAIAPIEvents.TRANSCRIPT_UPDATED, (chatHistory) => {
+api.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (chatHistory) => {
   const mappedMessages = chatHistory.map((item) => ({
     uid: parseInt(item.uid) || 0,
     turn_id: item.turn_id,
     text: item.text,
-    status: item.status === ETurnStatus.END ? EMessageStatus.END : EMessageStatus.IN_PROGRESS,
+    status: item.status === TurnStatus.END ? TurnStatus.END : TurnStatus.IN_PROGRESS,
   }));
 
-  const inProgressMsg = mappedMessages.find((m) => m.status === EMessageStatus.IN_PROGRESS);
-  const finalMessages = mappedMessages.filter((m) => m.status === EMessageStatus.END);
+  const inProgressMsg = mappedMessages.find((m) => m.status === TurnStatus.IN_PROGRESS);
+  const finalMessages = mappedMessages.filter((m) => m.status === TurnStatus.END);
 
   setMessageList(finalMessages);
   setCurrentInProgressMessage(inProgressMsg || null);
 });
 ```
 
-The implementation also: creates an RTM client, logs in with the same token as RTC, subscribes to the channel, calls `ConversationalAIAPI.init()` with `rtcEngine`, `rtmEngine`, and `renderMode: ETranscriptHelperMode.TEXT`, then `api.subscribeMessage(channel)`. On unmount, call `api.unsubscribe()`, `api.destroy()`, and RTM `logout()`. When token renewal is needed, renew both RTC and RTM tokens.
+The implementation also: creates an RTM client, logs in with the same token as RTC, subscribes to the channel, calls `AgoraVoiceAI.init()` (or the equivalent factory) with `rtcEngine`, `rtmEngine`, and `renderMode: TranscriptHelperMode.TEXT`, then `api.subscribeMessage(channel)`. On unmount, call `api.unsubscribe()`, `api.destroy()`, and RTM `logout()`. When token renewal is needed, renew both RTC and RTM tokens.
 
 ## Building the UI: The `ConvoTextStream` Component
 
@@ -212,8 +221,8 @@ It needs data from its parent (`ConversationComponent`):
 
 ```typescript
 interface ConvoTextStreamProps {
-  messageList: IMessageListItem[];
-  currentInProgressMessage?: IMessageListItem | null;
+  messageList: TranscriptHelperItem[];
+  currentInProgressMessage?: TranscriptHelperItem | null;
   agentUID: string | undefined;  // e.g. process.env.NEXT_AGENT_UID
 }
 ```
@@ -298,7 +307,7 @@ const hasContentChangedSignificantly = (threshold = 20): boolean => {
   // Update the ref *only if* it changed significantly
   if (
     hasSignificantChange ||
-    currentInProgressMessage.status !== EMessageStatus.IN_PROGRESS
+    currentInProgressMessage.status !== TurnStatus.IN_PROGRESS
   ) {
     prevMessageTextRef.current = currentText;
   }
@@ -353,7 +362,7 @@ const shouldShowStreamingMessage = (): boolean => {
     // Is there an in-progress message?
     currentInProgressMessage !== null &&
     // Is it *actually* in progress?
-    currentInProgressMessage.status === EMessageStatus.IN_PROGRESS &&
+    currentInProgressMessage.status === TurnStatus.IN_PROGRESS &&
     // Does it have any text content yet?
     currentInProgressMessage.text.trim().length > 0
   );
@@ -434,7 +443,7 @@ The core rendering logic maps over the combined message list (`allMessagesToRend
       'max-w-[80%] rounded-xl px-3 py-2 text-sm md:text-base shadow-sm', // Slightly softer corners, shadow
       isAgent ? 'bg-gray-100 text-gray-800' : 'bg-blue-500 text-white',
       // Optional: Dim user message slightly if interrupted while IN_PROGRESS
-      message.status === EMessageStatus.IN_PROGRESS && !isAgent && 'opacity-80'
+      message.status === TurnStatus.IN_PROGRESS && !isAgent && 'opacity-80'
     )}
   >
     {message.text}
@@ -449,9 +458,9 @@ This uses `tailwindcss` and the `cn` utility for conditional classes to:
 
 ## Putting It All Together: Integration in `ConversationComponent`
 
-Integrating the `ConvoTextStream` into your main `ConversationComponent` is straightforward once the `ConversationalAIAPI` is initialized and handling `TRANSCRIPT_UPDATED` events.
+Integrating the `ConvoTextStream` into your main `ConversationComponent` is straightforward once the `AgoraVoiceAI` from `agora-client-toolkit` is initialized and handling transcript events.
 
-1.  **Initialize ConversationalAIAPI**: Set up the API in a `useEffect` (with RTM client, login, channel subscription), subscribe to `TRANSCRIPT_UPDATED`, map the payload to `IMessageListItem`, and update `messageList` and `currentInProgressMessage`.
+1.  **Initialize AgoraVoiceAI**: Set up the API in a `useEffect` (with RTM client, login, channel subscription), subscribe to transcript events, map the payload to message items, and update `messageList` and `currentInProgressMessage`.
 2.  **Render `ConvoTextStream`**: In the `ConversationComponent`'s return JSX, include the `ConvoTextStream` and pass the necessary props:
 
 ```typescript
@@ -462,7 +471,7 @@ Integrating the `ConvoTextStream` into your main `ConversationComponent` is stra
 />
 ```
 
-The `ConversationalAIAPI` handles the data flow from RTM, the `TRANSCRIPT_UPDATED` handler updates state in `ConversationComponent`, which then passes the data down to `ConvoTextStream` for display.
+The `AgoraVoiceAI` handles the data flow from RTM, the transcript event handler updates state in `ConversationComponent`, which then passes the data down to `ConvoTextStream` for display.
 
 ## Making It Your Own: Styling and Customization
 
@@ -497,11 +506,11 @@ The `animate-pulse` class is a basic indicator. You could replace it with:
   message.text;
 }
 {
-  message.status === EMessageStatus.IN_PROGRESS ? '...' : '';
+  message.status === TurnStatus.IN_PROGRESS ? '...' : '';
 }
 
 // Remove the animate-pulse class if using ellipsis
-// className={cn( ... , message.status === EMessageStatus.IN_PROGRESS && 'animate-pulse' )}
+// className={cn( ... , message.status === TurnStatus.IN_PROGRESS && 'animate-pulse' )}
 ```
 
 ### Expanding/Collapsing Behavior
@@ -510,12 +519,12 @@ Modify the `toggleChatExpanded` function and the associated conditional classes 
 
 ## Under the Hood: Message Processing Flow
 
-For the curious, here's how the `ConversationalAIAPI` processes transcription data from Agora RTM:
+For the curious, here's how the `AgoraVoiceAI` processes transcription data from Agora RTM:
 
 ```mermaid
 sequenceDiagram
     participant RTM as Agora RTM
-    participant API as ConversationalAIAPI
+    participant API as AgoraVoiceAI
     participant Handler as Internal Transcript Handler
     participant Callback as TRANSCRIPT_UPDATED Handler (in ConversationComponent)
     participant State as ConversationComponent State
@@ -527,7 +536,7 @@ sequenceDiagram
     Callback->>State: setState({ messageList, currentInProgressMessage })
 ```
 
-This shows: RTM delivers raw data, the API processes it and maintains chat history, then emits `TRANSCRIPT_UPDATED` with the updated list. Your handler maps it to `IMessageListItem` and updates React state.
+This shows: RTM delivers raw data, the API processes it and maintains chat history, then emits transcript events with the updated list. Your handler maps it to message items and updates React state.
 
 ## Full Component Code (`ConvoTextStream.tsx`)
 
@@ -546,11 +555,16 @@ import {
   Shrink, // Added icon for shrink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { IMessageListItem, EMessageStatus } from '@/lib/message'; // Assuming types are here
+import {
+  TranscriptHelperItem,
+  TurnStatus,
+  type UserTranscription,
+  type AgentTranscription,
+} from 'agora-client-toolkit';
 
 interface ConvoTextStreamProps {
-  messageList: IMessageListItem[];
-  currentInProgressMessage?: IMessageListItem | null;
+  messageList: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>[];
+  currentInProgressMessage?: TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>> | null;
   agentUID: string | number | undefined; // Allow number or string
 }
 
@@ -594,7 +608,7 @@ export default function ConvoTextStream({
       const currentText = currentInProgressMessage.text || '';
       // Only compare if the message is actually in progress
       const baseText =
-        currentInProgressMessage.status === EMessageStatus.IN_PROGRESS
+        currentInProgressMessage.status === TurnStatus.IN_PROGRESS
           ? prevMessageTextRef.current
           : currentText;
       const textLengthDiff = currentText.length - baseText.length;
@@ -603,7 +617,7 @@ export default function ConvoTextStream({
       // Update ref immediately if it's a significant change or message finished/interrupted
       if (
         hasSignificantChange ||
-        currentInProgressMessage.status !== EMessageStatus.IN_PROGRESS
+        currentInProgressMessage.status !== TurnStatus.IN_PROGRESS
       ) {
         prevMessageTextRef.current = currentText;
       }
@@ -655,7 +669,7 @@ export default function ConvoTextStream({
   const shouldShowStreamingMessage = useCallback((): boolean => {
     return (
       currentInProgressMessage !== null &&
-      currentInProgressMessage.status === EMessageStatus.IN_PROGRESS &&
+      currentInProgressMessage.status === TurnStatus.IN_PROGRESS &&
       currentInProgressMessage.text.trim().length > 0
     );
   }, [currentInProgressMessage]);
@@ -809,10 +823,10 @@ Let's quickly recap the data flow within the context of the entire application:
 
 1.  **User Speaks / AI Generates**: Audio happens in the Agora channel. STT and AI processing generate transcription data.
 2.  **RTM Channel**: This data (user transcriptions, AI transcriptions, interrupts) is sent over Agora RTM.
-3.  **`ConversationalAIAPI` Listens**: The API subscribes to the RTM channel and processes incoming messages.
+3.  **`AgoraVoiceAI` Listens**: The API subscribes to the RTM channel and processes incoming messages.
 4.  **API Processes**: It decodes the data, manages message state (`IN_PROGRESS`, `END`, etc.), and maintains chat history.
 5.  **Event Emitted**: The API emits `TRANSCRIPT_UPDATED` with the updated `ITranscriptHelperItem[]`.
-6.  **`ConversationComponent` State Update**: Your handler maps the payload to `IMessageListItem` and calls `setMessageList` and `setCurrentInProgressMessage`.
+6.  **`ConversationComponent` State Update**: Your handler maps the payload to `TranscriptHelperItem` and calls `setMessageList` and `setCurrentInProgressMessage`.
 7.  **React Re-renders**: The state update triggers a re-render of `ConversationComponent`.
 8.  **`ConvoTextStream` Receives Props**: The component receives the fresh `messageList` and `currentInProgressMessage` as props.
 9.  **UI Updates**: `ConvoTextStream` renders the new text (optionally via `renderMarkdownToHtml`), applies styles (e.g., pulse for in-progress), and handles scrolling.
@@ -825,7 +839,7 @@ You've now got the tools and understanding to add slick, real-time text streamin
 
 **Your next steps:**
 
-1.  **Integrate**: Drop the `ConversationalAIAPI` initialization (with RTM) into your `ConversationComponent` and render the `ConvoTextStream` (or your custom version).
+1.  **Integrate**: Drop the `AgoraVoiceAI` initialization (with RTM) into your `ConversationComponent` and render the `ConvoTextStream` (or your custom version).
 2.  **Customize**: Style the `ConvoTextStream` to perfectly match your app's design language. Tweak animations and scrolling behavior for the best UX.
 3.  **Test**: Try it out in different scenarios – long messages, quick interruptions, noisy environments (if testing STT).
 4.  **Refine**: Based on testing, adjust VAD settings in your backend or fine-tune the UI behavior.

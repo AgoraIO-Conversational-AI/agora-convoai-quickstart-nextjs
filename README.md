@@ -10,7 +10,7 @@ This application demonstrates how to build a production-ready conversational AI 
 - **Live text transcriptions** with streaming message updates and visual status indicators
 - **Advanced audio controls** including device selection and visual feedback
 - **Modern UX patterns** like smart auto-scrolling, mobile responsiveness, and accessibility features
-- **Flexible backend integration** supporting multiple LLM providers (OpenAI, Anthropic, etc.) and TTS services (Microsoft Azure, ElevenLabs)
+- **Flexible backend integration** supporting multiple LLM providers (OpenAI, Anthropic, etc.) and TTS via ElevenLabs
 - **Official Agora toolkit** integration for robust conversation management
 
 ## Guides and Documentation
@@ -54,49 +54,26 @@ cp .env.local.example .env.local
 
 The following environment variables are required:
 
-### Agora Configuration
+### Agora
 
 - `NEXT_PUBLIC_AGORA_APP_ID` - Your Agora App ID
 - `NEXT_AGORA_APP_CERTIFICATE` - Your Agora App Certificate
-- `NEXT_AGORA_CONVO_AI_BASE_URL` - Agora Conversation AI Base URL
-- `NEXT_AGORA_CUSTOMER_ID` - Your Agora Customer ID
-- `NEXT_AGORA_CUSTOMER_SECRET` - Your Agora Customer Secret
-- `NEXT_AGENT_UID` - Agent UID (defaults to "Agent")
+- `NEXT_PUBLIC_AGENT_UID` - UID assigned to the AI agent in the RTC channel
 
-### LLM Configuration
+### LLM
 
-- `NEXT_LLM_URL` - LLM API endpoint URL
-- `NEXT_LLM_API_KEY` - LLM API authentication token
-- `NEXT_LLM_MODEL` - LLM model to use (optional)
+- `NEXT_LLM_URL` - Any OpenAI-compatible endpoint (OpenAI, Azure, Groq, etc.)
+- `NEXT_LLM_API_KEY` - LLM API key
 
-### TTS Configuration
+### ASR
 
-Choose one of the following TTS providers:
+- `NEXT_DEEPGRAM_API_KEY` - Deepgram API key
 
-#### Microsoft TTS
+### TTS
 
-- `NEXT_TTS_VENDOR=microsoft`
-- `NEXT_MICROSOFT_TTS_KEY` - Microsoft TTS API key
-- `NEXT_MICROSOFT_TTS_REGION` - Microsoft TTS region
-- `NEXT_MICROSOFT_TTS_VOICE_NAME` - Voice name (optional, defaults to 'en-US-AndrewMultilingualNeural')
-- `NEXT_MICROSOFT_TTS_RATE` - Speech rate (optional, defaults to 1.0)
-- `NEXT_MICROSOFT_TTS_VOLUME` - Volume (optional, defaults to 100.0)
-
-#### ElevenLabs
-
-- `NEXT_TTS_VENDOR=elevenlabs`
 - `NEXT_ELEVENLABS_API_KEY` - ElevenLabs API key
-- `NEXT_ELEVENLABS_VOICE_ID` - ElevenLabs voice ID
-- `NEXT_ELEVENLABS_MODEL_ID` - Model ID (optional, defaults to 'eleven_flash_v2_5')
 
-### ASR Configuration (Optional)
-
-- `NEXT_SONIOX_API_KEY` - Soniox ASR API key (if using Soniox for speech recognition)
-
-### Modalities Configuration
-
-- `NEXT_INPUT_MODALITIES` - Comma-separated list of input modalities (defaults to 'text')
-- `NEXT_OUTPUT_MODALITIES` - Comma-separated list of output modalities (defaults to 'text,audio')
+Non-sensitive settings (model names, voice ID, language, etc.) are set directly in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) — edit them there.
 
 4. Run the development server:
 
@@ -110,17 +87,16 @@ pnpm dev
 
 This project is configured for quick deployments to Vercel.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Community%2Fconversational-ai-nextjs-client&project-name=conversational-ai-nextjs-client&repository-name=conversational-ai-nextjs-client&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE,NEXT_AGORA_CUSTOMER_ID,NEXT_AGORA_CUSTOMER_SECRET,NEXT_AGENT_UID,NEXT_LLM_API_KEY,NEXT_MICROSOFT_TTS_KEY,NEXT_ELEVENLABS_API_KEY&envDescription=API%20keys%20needed%20for%20the%20application&envLink=https://github.com/AgoraIO-Community/conversational-ai-nextjs-client%23prerequisites&demo-title=Conversational%20AI%20Demo&demo-description=A%20Next.js-based%20web-app%20for%20conversational%20AI%20agents&demo-image=https://raw.githubusercontent.com/AgoraIO-Community/conversational-ai-nextjs-client/main/.github/assets/Conversation-Ai-Client.gif&defaultValues=NEXT_AGORA_CONVO_AI_BASE_URL=https://api.agora.io/api/conversational-ai-agent/v2/projects/,NEXT_LLM_URL=https://api.openai.com/v1/chat/completions,NEXT_LLM_MODEL=gpt-4,NEXT_TTS_VENDOR=microsoft,NEXT_MICROSOFT_TTS_REGION=eastus,NEXT_MICROSOFT_TTS_VOICE_NAME=en-US-AndrewMultilingualNeural,NEXT_ELEVENLABS_VOICE_ID=XrExE9yKIg1WjnnlVkGX,NEXT_ELEVENLABS_MODEL_ID=eleven_flash_v2_5,NEXT_INPUT_MODALITIES=text,NEXT_OUTPUT_MODALITIES=text%2Caudio)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Community%2Fconversational-ai-nextjs-client&project-name=conversational-ai-nextjs-client&repository-name=conversational-ai-nextjs-client&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE,NEXT_PUBLIC_AGENT_UID,NEXT_LLM_URL,NEXT_LLM_API_KEY,NEXT_DEEPGRAM_API_KEY,NEXT_ELEVENLABS_API_KEY&envDescription=API%20keys%20and%20credentials%20needed%20to%20run%20the%20app&envLink=https://github.com/AgoraIO-Community/conversational-ai-nextjs-client%23prerequisites&demo-title=Conversational%20AI%20Demo&demo-description=A%20Next.js-based%20web-app%20for%20conversational%20AI%20agents&demo-image=https://raw.githubusercontent.com/AgoraIO-Community/conversational-ai-nextjs-client/main/.github/assets/Conversation-Ai-Client.gif&defaultValues=NEXT_LLM_URL=https://api.openai.com/v1/chat/completions)
 
 This will:
 
 1. Clone the repository to your GitHub account
 2. Create a new project on Vercel
 3. Prompt you to fill in the required environment variables:
-   - **Required**: Agora credentials (`NEXT_PUBLIC_AGORA_APP_ID`, `NEXT_AGORA_APP_CERTIFICATE`, etc.)
-   - **Required**: LLM API key (`NEXT_LLM_API_KEY`) - OpenAI API key by default
-   - **Required**: Either Microsoft TTS key (`NEXT_MICROSOFT_TTS_KEY`) or ElevenLabs API key (`NEXT_ELEVENLABS_API_KEY`)
-   - Other variables have defaults if values are not provided
+   - **Required**: Agora credentials (`NEXT_PUBLIC_AGORA_APP_ID`, `NEXT_AGORA_APP_CERTIFICATE`, `NEXT_PUBLIC_AGENT_UID`)
+   - **Required**: LLM endpoint and API key (`NEXT_LLM_URL`, `NEXT_LLM_API_KEY`)
+   - **Required**: Deepgram API key (`NEXT_DEEPGRAM_API_KEY`) and ElevenLabs API key (`NEXT_ELEVENLABS_API_KEY`)
 4. Deploy the application automatically
 
 ## Features
@@ -141,7 +117,7 @@ This will:
 
 ### AI Conversation Engine
 - **Custom LLM Integration**: Connect your preferred LLM (OpenAI, Anthropic, etc.)
-- **Multiple TTS Providers**: Support for Microsoft Azure TTS and ElevenLabs
+- **ElevenLabs TTS**: High-quality voice synthesis with ElevenLabs
 - **Modern Turn Detection**: Advanced turn-taking with configurable interrupt behavior
 - **RTM Data Channel**: Reliable message delivery with metrics and error reporting
 - **Token Management**: Automatic token renewal for both RTC and RTM to prevent disconnections
@@ -156,26 +132,11 @@ This will:
 
 ## Voice Options
 
-### Microsoft TTS
-
-Male voices:
-- en-US-AndrewMultilingualNeural (default)
-- en-US-ChristopherNeural (casual, friendly)
-- en-US-GuyNeural (professional)
-- en-US-JasonNeural (clear, energetic)
-- en-US-TonyNeural (enthusiastic)
-
-Female voices:
-- en-US-JennyNeural (assistant-like)
-- en-US-AriaNeural (professional)
-- en-US-EmmaNeural (friendly)
-- en-US-SaraNeural (warm)
-
-Try voices: https://speech.microsoft.com/portal/voicegallery
-
 ### ElevenLabs
 
-Try voices: https://elevenlabs.io/app/voice-lab
+Browse and select voices at: https://elevenlabs.io/app/voice-lab
+
+Set your chosen voice ID in the `ELEVENLABS_VOICE_ID` constant in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts).
 
 ## Key Components
 

@@ -23,21 +23,16 @@ import type {
 } from '@/types/conversation';
 import ConvoTextStream from './ConvoTextStream';
 import {
-  ConversationalAIAPI,
-  type IConversationalAIAPIConfig,
-} from '@/lib/conversational-ai-api';
-import {
-  EConversationalAIAPIEvents,
-  ETranscriptHelperMode,
-  ETurnStatus,
-  type ITranscriptHelperItem,
-  type IUserTranscription,
-  type IAgentTranscription,
-} from '@/lib/conversational-ai-api/type';
-import { IMessageListItem, EMessageStatus } from '@/lib/message';
+  AgoraVoiceAI,
+  AgoraVoiceAIEvents,
+  TranscriptHelperMode,
+  TurnStatus,
+  type TranscriptHelperItem,
+  type UserTranscription,
+  type AgentTranscription,
+} from 'agora-agent-client-toolkit';
 
-// Export for compatibility
-export { EMessageStatus } from '@/lib/message';
+type MessageItem = TranscriptHelperItem<Partial<UserTranscription | AgentTranscription>>;
 
 export default function ConversationComponent({
   agoraData,
@@ -52,12 +47,13 @@ export default function ConversationComponent({
   const [isAgentConnected, setIsAgentConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const agentUID = process.env.NEXT_PUBLIC_AGENT_UID;
+  const [activeAgentId, setActiveAgentId] = useState<string | undefined>(agoraData.agentId);
   const [joinedUID, setJoinedUID] = useState<UID>(0);
-  const [messageList, setMessageList] = useState<IMessageListItem[]>([]);
-  const [currentInProgressMessage, setCurrentInProgressMessage] = useState<IMessageListItem | null>(null);
-  
+  const [messageList, setMessageList] = useState<MessageItem[]>([]);
+  const [currentInProgressMessage, setCurrentInProgressMessage] = useState<MessageItem | null>(null);
+
   const rtmClientRef = useRef<any>(null);
-  const conversationalAPIRef = useRef<ConversationalAIAPI | null>(null);
+  const conversationalAPIRef = useRef<AgoraVoiceAI | null>(null);
 
   // Check if agent UID is properly set
   useEffect(() => {
@@ -74,7 +70,7 @@ export default function ConversationComponent({
       appid: process.env.NEXT_PUBLIC_AGORA_APP_ID!,
       channel: agoraData.channel,
       token: agoraData.token,
-      uid: parseInt(agoraData.uid),
+      uid: parseInt(agoraData.uid, 10) || 0,
     },
     true
   );
@@ -103,12 +99,11 @@ export default function ConversationComponent({
       try {
         // Clean up existing instances
         if (conversationalAPIRef.current) {
-          console.log('Cleaning up existing ConversationalAIAPI instance');
+          console.log('Cleaning up existing AgoraVoiceAI instance');
           try {
-            conversationalAPIRef.current.unsubscribe();
             conversationalAPIRef.current.destroy();
           } catch (err) {
-            console.error('Error cleaning up ConversationalAIAPI:', err);
+            console.error('Error cleaning up AgoraVoiceAI:', err);
           }
           conversationalAPIRef.current = null;
         }
@@ -143,94 +138,42 @@ export default function ConversationComponent({
         await rtmClient.subscribe(agoraData.channel);
         console.log('RTM channel subscription successful');
 
-        // Initialize ConversationalAIAPI
-        console.log('Initializing ConversationalAIAPI...');
-        const apiConfig: IConversationalAIAPIConfig = {
+        // Initialize AgoraVoiceAI
+        console.log('Initializing AgoraVoiceAI...');
+        const api = await AgoraVoiceAI.init({
           rtcEngine: client as any,
-          rtmEngine: rtmClient as any,
-          renderMode: ETranscriptHelperMode.TEXT,
+          rtmConfig: { rtmEngine: rtmClient as any },
+          renderMode: TranscriptHelperMode.TEXT,
           enableLog: true,
-          enableRenderModeFallback: true,
-        };
-
-        const api = ConversationalAIAPI.init(apiConfig);
+        });
         conversationalAPIRef.current = api;
 
         // Subscribe to events
-        api.on(
-          EConversationalAIAPIEvents.TRANSCRIPT_UPDATED,
-          (
-            chatHistory: ITranscriptHelperItem<
-              Partial<IUserTranscription | IAgentTranscription>
-            >[]
-          ) => {
-            console.log('Transcript updated - raw chatHistory:', chatHistory);
+        api.on(AgoraVoiceAIEvents.TRANSCRIPT_UPDATED, (transcript) => {
+          console.log('Transcript updated:', transcript);
+          setMessageList(transcript.filter((m) => m.status === TurnStatus.END));
+          setCurrentInProgressMessage(
+            transcript.find((m) => m.status === TurnStatus.IN_PROGRESS) ?? null
+          );
+        });
 
-            // Map toolkit format to ConvoTextStream format
-            const mappedMessages: IMessageListItem[] = chatHistory.map((item) => {
-              // Determine if message is final based on status
-              // ETurnStatus.END = 1, ETurnStatus.IN_PROGRESS = 0
-              const isFinal = item.status === ETurnStatus.END;
+        api.on(AgoraVoiceAIEvents.AGENT_STATE_CHANGED, (agentUserId, event) => {
+          console.log(`Agent ${agentUserId} state changed:`, event);
+        });
 
-              const mapped = {
-                uid: parseInt(item.uid) || 0,
-                turn_id: item.turn_id,
-                text: item.text,
-                status: isFinal ? EMessageStatus.END : EMessageStatus.IN_PROGRESS,
-                time: item._time,
-                stream_id: item.stream_id,
-              };
-              
-              console.log('Mapped message:', {
-                original: { uid: item.uid, text: item.text, status: item.status },
-                mapped,
-              });
-              
-              return mapped;
-            });
+        api.on(AgoraVoiceAIEvents.AGENT_ERROR, (agentUserId, error) => {
+          console.error(`Agent ${agentUserId} error:`, error);
+        });
 
-            // Find the latest in-progress message
-            const inProgressMsg = mappedMessages.find(
-              (msg) => msg.status === EMessageStatus.IN_PROGRESS
-            );
-
-            const finalMessages = mappedMessages.filter((msg) => msg.status === EMessageStatus.END);
-            
-            console.log('Setting messageList:', finalMessages);
-            console.log('Setting inProgressMessage:', inProgressMsg);
-
-            // Update states
-            setMessageList(finalMessages);
-            setCurrentInProgressMessage(inProgressMsg || null);
-          }
-        );
-
-        api.on(
-          EConversationalAIAPIEvents.AGENT_STATE_CHANGED,
-          (agentUserId: string, event: any) => {
-            console.log(`Agent ${agentUserId} state changed:`, event);
-          }
-        );
-
-        api.on(
-          EConversationalAIAPIEvents.AGENT_ERROR,
-          (agentUserId: string, error: any) => {
-            console.error(`Agent ${agentUserId} error:`, error);
-          }
-        );
-
-        api.on(
-          EConversationalAIAPIEvents.AGENT_METRICS,
-          (agentUserId: string, metrics: any) => {
-            console.log(`Agent ${agentUserId} metrics:`, metrics);
-          }
-        );
+        api.on(AgoraVoiceAIEvents.AGENT_METRICS, (agentUserId, metrics) => {
+          console.log(`Agent ${agentUserId} metrics:`, metrics);
+        });
 
         // Subscribe to messages
         api.subscribeMessage(agoraData.channel);
-        console.log('ConversationalAIAPI initialized and subscribed');
+        console.log('AgoraVoiceAI initialized and subscribed');
       } catch (error) {
-        console.error('Failed to initialize RTM and ConversationalAIAPI:', error);
+        console.error('Failed to initialize RTM and AgoraVoiceAI:', error);
       }
     };
 
@@ -239,12 +182,11 @@ export default function ConversationComponent({
     // Cleanup on unmount or state change
     return () => {
       if (conversationalAPIRef.current) {
-        console.log('Cleaning up ConversationalAIAPI on unmount');
+        console.log('Cleaning up AgoraVoiceAI on unmount');
         try {
-          conversationalAPIRef.current.unsubscribe();
           conversationalAPIRef.current.destroy();
         } catch (err) {
-          console.error('Error cleaning up ConversationalAIAPI:', err);
+          console.error('Error cleaning up AgoraVoiceAI:', err);
         }
         conversationalAPIRef.current = null;
       }
@@ -324,15 +266,13 @@ export default function ConversationComponent({
   }, [localMicrophoneTrack]);
 
   const handleStartConversation = async () => {
-    if (!agoraData.agentId) return;
+    if (!activeAgentId) return;
     setIsConnecting(true);
 
     try {
       const startRequest: ClientStartRequest = {
         requester_id: joinedUID?.toString(),
         channel_name: agoraData.channel,
-        input_modalities: ['text'],
-        output_modalities: ['text', 'audio'],
       };
 
       const response = await fetch('/api/invite-agent', {
@@ -347,16 +287,14 @@ export default function ConversationComponent({
         throw new Error(`Failed to start conversation: ${response.statusText}`);
       }
 
-      // Update agent ID when new agent is connected
       const data = await response.json();
       if (data.agent_id) {
-        agoraData.agentId = data.agent_id;
+        setActiveAgentId(data.agent_id);
       }
     } catch (error) {
       if (error instanceof Error) {
         console.warn('Error starting conversation:', error.message);
       }
-      // Reset connecting state if there's an error
       setIsConnecting(false);
     }
   };
@@ -464,9 +402,8 @@ export default function ConversationComponent({
 
       {/* Conversation Text Stream component */}
       <ConvoTextStream
-        messageList={messageList as any}
-        currentInProgressMessage={currentInProgressMessage as any}
-        agentUID={agentUID}
+        messageList={messageList}
+        currentInProgressMessage={currentInProgressMessage}
       />
     </div>
   );

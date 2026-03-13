@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "next dev",
@@ -44,6 +44,8 @@
     "agora-rtc-react": "latest",
     "agora-rtc-sdk-ng": "4.23.0",
     "agora-rtm": "latest",
+    "agora-agent-client-toolkit": "workspace:*",
+    "agora-agent-server-sdk": "workspace:agent-server-sdk-ts",
     "agora-token": "latest",
     "ai": "^6.0.107",
     "autoprefixer": "^10.4.20",

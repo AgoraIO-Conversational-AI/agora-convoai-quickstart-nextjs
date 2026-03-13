@@ -110,7 +110,9 @@ export function MicrophoneButton({
         console.log('Microphone state updated successfully');
       } catch (error) {
         console.error('Failed to toggle microphone:', error);
-        localMicrophoneTrack.setEnabled(isEnabled);
+        await localMicrophoneTrack.setEnabled(isEnabled).catch((revertErr) => {
+          console.error('Failed to revert microphone state:', revertErr);
+        });
       }
     }
   };

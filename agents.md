@@ -65,23 +65,11 @@ All vars live in `.env.local` (gitignored). `env.local.example` is the source of
 |---|---|---|---|
 | `NEXT_PUBLIC_AGORA_APP_ID` | client+server | ✅ | Agora project App ID |
 | `NEXT_AGORA_APP_CERTIFICATE` | server only | ✅ | Used to sign v007 tokens |
-| `NEXT_AGORA_CONVO_AI_BASE_URL` | server only | ✅ | `https://api.agora.io/api/conversational-ai-agent/v2/projects/` |
 | `NEXT_PUBLIC_AGENT_UID` | client+server | ✅ | Numeric UID Agora assigns the agent (e.g. `"123"`). Must have `NEXT_PUBLIC_` prefix — read client-side in `ConversationComponent` to detect when the agent joins. |
-| `NEXT_ASR_VENDOR` | server only | ✅ | `ares` / `deepgram` / `microsoft` / `soniox` |
-| `NEXT_DEEPGRAM_API_KEY` | server only | if deepgram | |
-| `NEXT_DEEPGRAM_MODEL` | server only | no | default `nova-3` |
-| `NEXT_DEEPGRAM_LANGUAGE` | server only | no | default `en` |
-| `NEXT_MICROSOFT_STT_KEY` / `_REGION` | server only | if microsoft | |
-| `NEXT_SONIOX_API_KEY` | server only | if soniox | |
-| `NEXT_LLM_URL` | server only | ✅ | e.g. `https://api.openai.com/v1/chat/completions` |
-| `NEXT_LLM_MODEL` | server only | ✅ | e.g. `gpt-4o` |
+| `NEXT_DEEPGRAM_API_KEY` | server only | ✅ | Deepgram API key for speech-to-text |
+| `NEXT_LLM_URL` | server only | ✅ | Any OpenAI-compatible endpoint, e.g. `https://api.openai.com/v1/chat/completions` |
 | `NEXT_LLM_API_KEY` | server only | ✅ | Key forwarded to the LLM |
-| `NEXT_CUSTOM_LLM` | server only | no | `true` → route agent through `/api/chat/completions` proxy |
-| `NEXT_CUSTOM_LLM_URL` | server only | if custom | Publicly reachable base URL (ngrok in dev, Vercel URL in prod). `/api/chat/completions` is appended automatically if missing. |
-| `NEXT_CUSTOM_LLM_SECRET` | server only | no | Shared secret: `invite-agent` puts this in `api_key`; `/api/chat/completions` verifies it as `Bearer <secret>`. |
-| `NEXT_TTS_VENDOR` | server only | ✅ | `elevenlabs` / `microsoft` |
-| `NEXT_ELEVENLABS_API_KEY` / `_VOICE_ID` / `_MODEL_ID` | server only | if elevenlabs | |
-| `NEXT_MICROSOFT_TTS_KEY` / `_REGION` / `_VOICE_NAME` / `_RATE` / `_VOLUME` | server only | if microsoft | |
+| `NEXT_ELEVENLABS_API_KEY` | server only | ✅ | ElevenLabs API key for text-to-speech |
 
 **`NEXT_PUBLIC_` prefix** = exposed to the browser bundle. All others are server-only.
 
@@ -120,22 +108,16 @@ Starts an Agora ConvoAI agent. This is the most complex route.
 ```
 
 **What it does:**
-1. Calls `getValidatedConfig()` — reads + validates all env vars; throws on missing required values.
-2. Reads `NEXT_CUSTOM_LLM` to decide whether to route LLM through the local proxy.
-3. If `NEXT_CUSTOM_LLM=true`: resolves `llmUrl` to `NEXT_CUSTOM_LLM_URL + /api/chat/completions` (appended automatically if missing). Sets `api_key` to `NEXT_CUSTOM_LLM_SECRET`.
-4. If `NEXT_CUSTOM_LLM=false`: uses `NEXT_LLM_URL` and `NEXT_LLM_API_KEY` directly.
-5. Generates a v006 RTC+RTM token for the agent via `RtcTokenBuilder.buildTokenWithRtm`.
-6. Assembles `AgoraStartRequest` with ASR, LLM, TTS, VAD, and RTM config.
-7. Builds a v007 auth header via `buildAgoraAuthHeader(appId, appCertificate)`.
-8. POSTs to `NEXT_AGORA_CONVO_AI_BASE_URL/{appId}/join`.
-9. Returns `AgentResponse: { agent_id, create_ts, state }`.
+1. Reads and validates required env vars; throws on startup if any are missing.
+2. Builds the agent with Deepgram STT, OpenAI LLM (via `NEXT_LLM_URL`), and ElevenLabs TTS.
+3. Starts a session via the `agora-agent-server-sdk` — the SDK handles token generation and the Agora REST call internally.
+4. Returns `AgentResponse: { agent_id, create_ts, state }`.
 
 **Key hard-coded agent behaviour:**
-- `turn_detection.mode = 'agora_vad'`
-- `advanced_features.enable_rtm = true` — required for transcripts
-- `parameters.data_channel = 'rtm'` — transcripts come over RTM, not stream-message
-- `idle_timeout = 30` seconds
-- The system prompt is a large Ada persona baked directly into this file (lines ~227–394).
+- `turn_detection.type = 'agora_vad'`
+- `advancedFeatures.enable_rtm = true` — enables RTM; the SDK automatically sets `parameters.data_channel: 'rtm'`
+- `idleTimeout = 30` seconds
+- The system prompt (Ada persona) and greeting are constants at the top of the file.
 
 ---
 
@@ -145,7 +127,7 @@ Starts an Agora ConvoAI agent. This is the most complex route.
 
 **Input body:** `{ agent_id: string }`
 
-POSTs to `NEXT_AGORA_CONVO_AI_BASE_URL/{appId}/agents/{agent_id}/leave` with a v007 auth header.
+Calls `session.stop(agent_id)` via the `agora-agent-server-sdk`.
 
 ---
 
@@ -153,15 +135,13 @@ POSTs to `NEXT_AGORA_CONVO_AI_BASE_URL/{appId}/agents/{agent_id}/leave` with a v
 
 **File:** `app/api/chat/completions/route.ts`
 
-OpenAI-compatible streaming endpoint. Agora's cloud calls this when `NEXT_CUSTOM_LLM=true`.
+Optional OpenAI-compatible streaming endpoint. Point the agent at your deployed URL to intercept LLM calls and add RAG, tool calls, guardrails, etc.
 
-**Auth:** If `NEXT_CUSTOM_LLM_SECRET` is set, enforces `Authorization: Bearer <secret>`. Requests without the correct bearer token get a 401.
-
-**Model pinning:** Always uses `NEXT_LLM_MODEL` from env — ignores `body.model` entirely to prevent model injection.
+**Model pinning:** Always uses the model hardcoded in the route (`'gpt-4o'`) — ignores `body.model` entirely to prevent model injection.
 
 **Pipeline:** Uses Vercel AI SDK `streamText` + `createOpenAI`. Strips `/chat/completions` suffix from `NEXT_LLM_URL` to get a base URL for `@ai-sdk/openai`. Re-emits the stream as OpenAI SSE wire format (role chunk → content chunks → stop chunk → `[DONE]`).
 
-**Extension point:** Insert RAG retrieval, tool calls, guardrails, etc. between `body = await request.json()` and `streamText(...)`.
+**Extension point:** Insert logic between `body = await request.json()` and `streamText(...)` — prepend retrieved context to `body.messages`, call tools, run guardrails, etc.
 
 ---
 
@@ -384,22 +364,20 @@ User clicks "Try it now!"
 
 ## 9. Custom LLM Mode
 
-When `NEXT_CUSTOM_LLM=true`:
+Point the agent at your deployed `/api/chat/completions` URL to intercept every LLM call:
 
 ```
 Agora cloud agent
-  └─ POST https://<NEXT_CUSTOM_LLM_URL>/api/chat/completions
-      Authorization: Bearer <NEXT_CUSTOM_LLM_SECRET>
+  └─ POST https://<your-deployed-url>/api/chat/completions
       body: { messages: [...], model: "...", stream: true }
         │
         └─ /api/chat/completions/route.ts
-            ├─ Verifies Bearer token against NEXT_CUSTOM_LLM_SECRET
             ├─ Creates openai provider via createOpenAI({ apiKey: NEXT_LLM_API_KEY, baseURL })
-            ├─ streamText({ model: NEXT_LLM_MODEL, messages })  ← model is always from env
+            ├─ streamText({ model: 'gpt-4o', messages })  ← model is hardcoded in the route
             └─ Re-emits as OpenAI SSE: role chunk → content chunks → stop → [DONE]
 ```
 
-**Local dev requirement:** Agora's cloud cannot reach `localhost`. Use `ngrok http 3000` and set `NEXT_CUSTOM_LLM_URL` to the ngrok HTTPS URL. In production, set it to the deployed domain.
+**Local dev requirement:** Agora's cloud cannot reach `localhost`. Use `ngrok http 3000` and point the agent at the ngrok HTTPS URL. In production, use the deployed domain.
 
 **To add RAG / tools / guardrails:** Edit `/api/chat/completions/route.ts` — insert logic between `body = await request.json()` and the `streamText(...)` call.
 
@@ -426,13 +404,13 @@ The v007 token is set as `Authorization: agora token=007...` on REST calls. It o
 
 2. **`ConversationalAIAPI` singleton cleanup is handled** — `init()` reuses an existing instance if one is alive. The `useEffect` cleanup in `ConversationComponent` always calls `.unsubscribe()` then `.destroy()` before re-initializing, which also covers React StrictMode's double-invoke in dev.
 
-3. **Model pinning is intentional** — `/api/chat/completions` always uses `NEXT_LLM_MODEL` from env and ignores `body.model` from the incoming request. This prevents model injection from Agora's side. The env var is the single source of truth.
+3. **Model pinning is intentional** — `/api/chat/completions` always uses the model hardcoded in the route (`'gpt-4o'`) and ignores `body.model` from the incoming request. This prevents model injection from Agora's side. Change the constant in the route file to switch models.
 
 ### Ongoing constraints
 
 4. **`NEXT_PUBLIC_AGENT_UID` must match exactly** — the component checks `user.uid.toString() === agentUID`. If the agent joins with a different UID, `isAgentConnected` never fires. A console warning will list the actual UIDs present if there's a mismatch. The `NEXT_PUBLIC_` prefix is required — this var is read in a client component.
 
-5. **Custom LLM needs a public URL** — `NEXT_CUSTOM_LLM_URL` must be reachable by Agora's servers. `localhost` does not work. Use `ngrok http 3000` in dev and set the env var to the ngrok HTTPS URL.
+5. **Custom LLM proxy needs a public URL** — `/api/chat/completions` must be reachable by Agora's servers. `localhost` does not work. Use `ngrok http 3000` in dev and point the agent at the ngrok HTTPS URL.
 
 6. **`audio-pts` must be enabled** — `ConversationComponent` calls `AgoraRTC.setParameter('ENABLE_AUDIO_PTS_METADATA', true)` after the client is ready. Without this, WORD mode transcripts won't sync to audio playback.
 
@@ -444,19 +422,14 @@ The v007 token is set as `Authorization: agora token=007...` on REST calls. It o
 
 ## 12. How to Make Common Changes
 
-### Add a new ASR vendor
-- Edit `getASRConfig()` in `app/api/invite-agent/route.ts`
-- Add the corresponding env vars to `env.local.example`
-- The function returns an object matching Agora's `asr` field spec
-
-### Add a new TTS vendor
-- Add a new case to `getTTSConfig()` in `app/api/invite-agent/route.ts`
-- Add the new enum value to `TTSVendor` in `types/conversation.ts`
-- Add env vars to `env.local.example`
+### Switch ASR or TTS vendor
+- Replace `new DeepgramSTT(...)` or `new ElevenLabsTTS(...)` in `app/api/invite-agent/route.ts` with the new vendor class from `agora-agent-server-sdk`
+- Add the vendor's API key to `.env.local` and `env.local.example`
+- Non-sensitive settings (model, language, voice ID) go directly in the constructor call
 
 ### Change the agent system prompt
-- Edit the `prompt` variable in `app/api/invite-agent/route.ts` (line ~227)
-- Also update `greeting_message` on the same object if needed
+- Edit the `ADA_PROMPT` constant at the top of `app/api/invite-agent/route.ts`
+- Update `GREETING` on the same file if needed
 
 ### Add RAG / tool calls to the custom LLM
 - Edit `app/api/chat/completions/route.ts`
@@ -469,5 +442,5 @@ The v007 token is set as `Authorization: agora token=007...` on REST calls. It o
 - Clean up with `api.off(...)` or let `.destroy()` handle it
 
 ### Change VAD / turn detection settings
-- Edit `requestBody.properties.turn_detection` in `app/api/invite-agent/route.ts`
-- Key params: `silence_duration_ms`, `speech_duration_ms`, `threshold`, `interrupt_duration_ms`
+- Edit the `turnDetection` object in `app/api/invite-agent/route.ts`
+- Key params: `silence_duration_ms`, `threshold`, `interrupt_duration_ms`, `prefix_padding_ms`
